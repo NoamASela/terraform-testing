@@ -1,101 +1,103 @@
 node {
+    ansiColor('xterm') {
 
-    stage ('Checkout') { 
-        checkout scm
-    }
- 
-    // Get the Terraform tool.
-    def tfHome = tool name: 'Terraform'
-    env.PATH = "${tfHome}:${env.PATH}"
-    // environment required for aws cli
-    env.PATH = "~/.local/bin:${env.PATH}"
+        stage ('Checkout') { 
+            checkout scm
+        }
 
-    stage ('Plan') {
-         sh "terraform --version"
-        // Remove the terraform state file so we always start from a clean state
-        if (fileExists(".terraform/terraform.tfstate")) {
-            sh "rm -rf .terraform/terraform.tfstate"
-        }
-        if (fileExists("status")) {
-            sh "rm status"
-        }
-        
-        // Terraform plan
-        sh "pwd"
-        sh "terraform init"
-        sh "terraform get"
-        sh "set +e; terraform plan -var \'environment=${env.JOB_NAME}\' -var \'key_name=${env.JOB_NAME}\' -out=plan.out -detailed-exitcode; echo \$? > status"
-        def exitCode = readFile('status').trim()
-        echo "Terraform Plan Exit Code: ${exitCode}"
-        if (exitCode == "0") {
-            // Should never get here
-            currentBuild.result = 'UNSTABLE'
-        }
-        if (exitCode == "1") {
-            currentBuild.result = 'FAILURE'
-        }
-        if (exitCode == "2") {
-            currentBuild.result = 'SUCCESS'
-        }
-    }
+        // Get the Terraform tool.
+        def tfHome = tool name: 'Terraform'
+        env.PATH = "${tfHome}:${env.PATH}"
+        // environment required for aws cli
+        env.PATH = "~/.local/bin:${env.PATH}"
 
-    stage ('Apply') {
-        // Applying according to plan
-        if (fileExists("status.apply")) {
-            sh "rm status.apply"
-        }
-        sh 'set +e; terraform apply plan.out; echo \$? > status.apply'
-        def applyExitCode = readFile('status.apply').trim()
-        if (applyExitCode == "0") {
-            currentBuild.result = 'SUCCESS'
-        } else {
-            currentBuild.result = 'FAILURE'
-        }
-    }
-    
-    def elb_hostname // elb_hostname for our created load balancer
-    //Checks that the NLB returns 200
-    stage ('Wait for NLB'){ 
-        if (fileExists("elb_hostname")) {
-            sh "rm elb_hostname"
-        }
-        sh 'set +e; terraform output elb_hostname > elb_hostname'
-        elb_hostname = readFile('elb_hostname').trim()
-        def alive =false
+        stage ('Plan') {
+             sh "terraform --version"
+            // Remove the terraform state file so we always start from a clean state
+            if (fileExists(".terraform/terraform.tfstate")) {
+                sh "rm -rf .terraform/terraform.tfstate"
+            }
+            if (fileExists("status")) {
+                sh "rm status"
+            }
 
-        // Waiting for 5 minutes
-        def lastResult
-        timeout(5) {
-            waitUntil {
-                script {
-                    lastResult = sh script: "wget -q ${elb_hostname} -O /dev/null", returnStatus: true
-                    return (lastResult == 0);
-                }
+            // Terraform plan
+            sh "pwd"
+            sh "terraform init"
+            sh "terraform get"
+            sh "set +e; terraform plan -var \'environment=${env.JOB_NAME}\' -var \'key_name=${env.JOB_NAME}\' -out=plan.out -detailed-exitcode; echo \$? > status"
+            def exitCode = readFile('status').trim()
+            echo "Terraform Plan Exit Code: ${exitCode}"
+            if (exitCode == "0") {
+                // Should never get here
+                currentBuild.result = 'UNSTABLE'
+            }
+            if (exitCode == "1") {
+                currentBuild.result = 'FAILURE'
+            }
+            if (exitCode == "2") {
+                currentBuild.result = 'SUCCESS'
             }
         }
-        if (lastResult == 0) {
-            currentBuild.result = 'SUCCESS'
-        }
-        else {
-            currentBuild.result = 'FAILURE'
-        }
-    }
 
-    stage ('Run Automation Tests'){ 
-        sh 'echo Do some fancy automtion here'
-    }
+        stage ('Apply') {
+            // Applying according to plan
+            if (fileExists("status.apply")) {
+                sh "rm status.apply"
+            }
+            sh 'set +e; terraform apply plan.out; echo \$? > status.apply'
+            def applyExitCode = readFile('status.apply').trim()
+            if (applyExitCode == "0") {
+                currentBuild.result = 'SUCCESS'
+            } else {
+                currentBuild.result = 'FAILURE'
+            }
+        }
 
-    stage ('Destroy') {
-        if (fileExists("status.destroy")) {
-            sh "rm status.destroy"
-        }        
-        sh "set +e; terraform destroy -var \'environment=${env.JOB_NAME}\' -var \'key_name=${env.JOB_NAME}\' -auto-approve; echo \$? > status.destroy"
-        
-        def destroyExitCode = readFile('status.destroy').trim()
-        if (destroyExitCode == "0") {
-            currentBuild.result = 'SUCCESS'
-        } else {
-            currentBuild.result = 'UNSTABLE'
+        def elb_hostname // elb_hostname for our created load balancer
+        //Checks that the NLB returns 200
+        stage ('Wait for NLB'){ 
+            if (fileExists("elb_hostname")) {
+                sh "rm elb_hostname"
+            }
+            sh 'set +e; terraform output elb_hostname > elb_hostname'
+            elb_hostname = readFile('elb_hostname').trim()
+            def alive =false
+
+            // Waiting for 5 minutes
+            def lastResult
+            timeout(5) {
+                waitUntil {
+                    script {
+                        lastResult = sh script: "wget -q ${elb_hostname} -O /dev/null", returnStatus: true
+                        return (lastResult == 0);
+                    }
+                }
+            }
+            if (lastResult == 0) {
+                currentBuild.result = 'SUCCESS'
+            }
+            else {
+                currentBuild.result = 'FAILURE'
+            }
+        }
+
+        stage ('Run Automation Tests'){ 
+            sh 'echo Do some fancy automtion here'
+        }
+
+        stage ('Destroy') {
+            if (fileExists("status.destroy")) {
+                sh "rm status.destroy"
+            }        
+            sh "set +e; terraform destroy -var \'environment=${env.JOB_NAME}\' -var \'key_name=${env.JOB_NAME}\' -auto-approve; echo \$? > status.destroy"
+
+            def destroyExitCode = readFile('status.destroy').trim()
+            if (destroyExitCode == "0") {
+                currentBuild.result = 'SUCCESS'
+            } else {
+                currentBuild.result = 'UNSTABLE'
+            }
         }
     }
 }
